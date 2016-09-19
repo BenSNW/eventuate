@@ -29,12 +29,13 @@ object DurableEventProcessor {
   import DurableEventWriter._
 
   def statelessProcessor[M](id: String, eventLog: ActorRef, maxBatchSize: Int)(logic: Any => Graph[FlowShape[Any, Any], M]): Flow[DurableEvent, DurableEvent, NotUsed] =
-    Flow[DurableEvent].flatMapConcat { event =>
-      Source.single(event.payload).via(logic(event.payload)).fold(Seq.empty[DurableEvent])(_ :+ event.copy(_))
-    }.via(batchWriterN(id, eventLog, maxBatchSize))
+    statelessTransformer(logic).via(batchWriterN(id, eventLog, maxBatchSize))
 
   def statefulProcessor[S, O](id: String, eventLog: ActorRef, maxBatchSize: Int, zero: S)(logic: (S, Any) => (S, Seq[O])): Flow[DurableEvent, DurableEvent, NotUsed] =
-    Flow[DurableEvent].via(statefulTransformer(zero)(logic)).via(batchWriterN(id, eventLog, maxBatchSize))
+    statefulTransformer(zero)(logic).via(batchWriterN(id, eventLog, maxBatchSize))
+
+  def statelessTransformer[M](logic: Any => Graph[FlowShape[Any, Any], M]): Flow[DurableEvent, Seq[DurableEvent], NotUsed] =
+    Flow[DurableEvent].flatMapConcat { event => Source.single(event.payload).via(logic(event.payload)).fold(Seq.empty[DurableEvent])(_ :+ event.copy(_)) }
 
   def statefulTransformer[S, O](zero: S)(logic: (S, Any) => (S, Seq[O])): Flow[DurableEvent, Seq[DurableEvent], NotUsed] =
     Flow.fromGraph[DurableEvent, Seq[DurableEvent], NotUsed](GraphDSL.create() { implicit builder =>
