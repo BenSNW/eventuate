@@ -48,7 +48,7 @@ private[vertx] class VertxSingleConfirmationSender(val id: String, val eventLog:
 
   override def onCommand: Receive = {
     case DeliverEvent(envelope, deliveryId) =>
-      produce[Unit](envelope.address, envelope.event, confirmationTimeout)
+      eventBusWriter.send[Unit](envelope.address, envelope.event, confirmationTimeout)
         .map(_ => Confirm(deliveryId))
         .recover {
           case err => DeliverFailed(envelope, deliveryId, err)

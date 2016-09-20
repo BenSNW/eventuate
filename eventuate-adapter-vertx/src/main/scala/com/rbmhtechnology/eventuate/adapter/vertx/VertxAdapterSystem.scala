@@ -17,6 +17,7 @@
 package com.rbmhtechnology.eventuate.adapter.vertx
 
 import akka.actor.{ ActorSystem, Props }
+import com.rbmhtechnology.eventuate.adapter.vertx.VertxWriteRouter.{ WriteRoute, Writer }
 import com.rbmhtechnology.eventuate.adapter.vertx.api._
 import com.rbmhtechnology.eventuate.adapter.vertx.japi.rx.{ StorageProvider => RxStorageProvider }
 import com.rbmhtechnology.eventuate.adapter.vertx.japi.{ StorageProvider => JStorageProvider, VertxAdapterSystemConfig => JVertxAdapterSystemConfig }
@@ -81,8 +82,11 @@ class VertxAdapterSystem private[vertx] (config: VertxAdapterSystemConfig, vertx
 
   private def writeAdapters: Seq[Props] = {
     if (config.writeAdapters.nonEmpty)
-      Seq(VertxWriteRouter.props(config.writeAdapters, vertx))
+      Seq(VertxWriteRouter.props(toWriteRoutes(config.writeAdapters), vertx))
     else
       Seq.empty
   }
+
+  private def toWriteRoutes(configs: Seq[VertxWriteAdapterConfig]): Seq[WriteRoute] =
+    configs.flatMap(c => c.endpoints.distinct.map(e => WriteRoute(e, Writer(c.id, c.log), c.filter)))
 }

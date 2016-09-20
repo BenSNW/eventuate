@@ -17,40 +17,37 @@
 package com.rbmhtechnology.eventuate.adapter.vertx
 
 import akka.actor.{ Actor, ActorRef, Props }
+import com.rbmhtechnology.eventuate.adapter.vertx.VertxWriteRouter.WriteRoute
 import com.rbmhtechnology.eventuate.adapter.vertx.VertxWriter.PersistMessage
-import com.rbmhtechnology.eventuate.adapter.vertx.api.VertxWriteAdapterConfig
 import io.vertx.core.Vertx
 import io.vertx.core.eventbus.{ Message, MessageConsumer }
 
 object VertxWriteRouter {
 
-  case class Route(sourceEndpoint: String, destinationLog: ActorRef, filter: PartialFunction[Any, Boolean])
+  case class Writer(id: String, log: ActorRef)
+  case class WriteRoute(sourceEndpoint: String, writer: Writer, filter: PartialFunction[Any, Boolean] = { case _ => true })
 
-  def props(config: Seq[VertxWriteAdapterConfig], vertx: Vertx): Props =
-    Props(new VertxWriteRouter(config, vertx))
+  def props(routes: Seq[WriteRoute], vertx: Vertx): Props =
+    Props(new VertxWriteRouter(routes, vertx))
 }
 
-class VertxWriteRouter(configs: Seq[VertxWriteAdapterConfig], vertx: Vertx) extends Actor {
+class VertxWriteRouter(routes: Seq[WriteRoute], vertx: Vertx) extends Actor {
+
   import VertxHandlerConverters._
-  import VertxWriteRouter._
 
-  val writers = configs
-    .map { c => c.id -> context.actorOf(VertxWriter.props(c.id, c.log)) }
-    .toMap
+  val writers = routes
+    .groupBy(_.writer)
+    .map { case (writer, _) => writer.id -> context.actorOf(VertxWriter.props(writer.id, writer.log)) }
 
-  val consumers = configs
-    .flatMap { c => c.endpoints.distinct.map(e => Route(e, writers(c.id), c.filter)) }
-    .groupBy(_.sourceEndpoint)
-    .map { case (endpoint, routes) => installMessageConsumer(endpoint, routes) }
+  val consumers = routes
+    .map { r => installMessageConsumer(r.sourceEndpoint, writers(r.writer.id), r.filter) }
 
-  private def installMessageConsumer(endpoint: String, routes: Seq[Route]): MessageConsumer[Any] = {
+  private def installMessageConsumer(endpoint: String, writer: ActorRef, filter: PartialFunction[Any, Boolean]): MessageConsumer[Any] = {
     val handler = (msg: Message[Any]) => {
-      routes.foreach { route =>
-        if (route.filter.applyOrElse(msg.body(), (_: Any) => false)) {
-          route.destinationLog ! PersistMessage(msg.body(), msg)
-        } else {
-          msg.reply(msg.body)
-        }
+      if (filter.applyOrElse(msg.body(), (_: Any) => false)) {
+        writer ! PersistMessage(msg.body(), msg)
+      } else {
+        msg.reply(msg.body)
       }
     }
     vertx.eventBus().consumer[Any](endpoint, handler.asVertxHandler)

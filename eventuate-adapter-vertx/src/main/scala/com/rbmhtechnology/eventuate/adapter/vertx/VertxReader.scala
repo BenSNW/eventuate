@@ -18,64 +18,43 @@ package com.rbmhtechnology.eventuate.adapter.vertx
 
 import com.rbmhtechnology.eventuate.EventsourcedWriter
 import com.rbmhtechnology.eventuate.adapter.vertx.api.{ StorageProvider, VertxEndpointRouter }
-import io.vertx.core.eventbus.impl.MessageImpl
-import io.vertx.core.eventbus.{ DeliveryOptions, EventBus, Message }
-import io.vertx.core.{ AsyncResult, Handler, Vertx, Future => VertxFuture }
+import io.vertx.core.Vertx
 
 import scala.collection.immutable.Seq
-import scala.concurrent.duration.{ FiniteDuration, _ }
-import scala.concurrent.{ ExecutionContext, Future, Promise }
+import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.{ ExecutionContext, Future }
 
 case class EventEnvelope(address: String, event: Any)
 
 trait MessageProducer {
-  import VertxHandlerConverters._
-
-  protected def eventBus(): EventBus =
-    vertx.eventBus()
-
   def vertx: Vertx
-
-  protected def produce[A](address: String, msg: Any, deliveryOptions: DeliveryOptions, handler: Handler[AsyncResult[Message[A]]]): Unit
-
-  def produce(address: String, msg: Any): Unit = {
-    produce[Unit](address, msg, new DeliveryOptions(), ((ar: AsyncResult[Message[Unit]]) => {}).asVertxHandler)
-  }
-
-  def produce[A](address: String, msg: Any, timeout: FiniteDuration = 30.seconds)(implicit ec: ExecutionContext): Future[A] = {
-    val promise = Promise[Message[A]]
-    produce(address, msg, new DeliveryOptions().setSendTimeout(timeout.toMillis), promise.asVertxHandler)
-    promise.future.map(_.body)
-  }
 }
 
 trait MessagePublisher extends MessageProducer {
-  override protected def produce[A](address: String, msg: Any, deliveryOptions: DeliveryOptions, handler: Handler[AsyncResult[Message[A]]]): Unit = {
-    eventBus().publish(address, msg, deliveryOptions)
-    handler.handle(VertxFuture.succeededFuture(new MessageImpl[Any, A]()))
-  }
+  lazy val eventBusWriter: EventBusWriter = new EventBusPublisher(vertx)
 }
 
 trait MessageSender extends MessageProducer {
-  override protected def produce[A](address: String, msg: Any, deliveryOptions: DeliveryOptions, handler: Handler[AsyncResult[Message[A]]]): Unit = {
-    eventBus().send(address, msg, deliveryOptions, handler)
-  }
+  lazy val eventBusWriter: EventBusSender = new EventBusSender(vertx)
 }
 
-trait MessageDelivery extends MessageProducer {
+trait MessageDelivery {
   def deliver(events: Seq[EventEnvelope])(implicit ec: ExecutionContext): Future[Unit]
 }
 
 trait AtMostOnceDelivery extends MessageDelivery {
+  def eventBusWriter: EventBusWriter
+
   override def deliver(events: Seq[EventEnvelope])(implicit ec: ExecutionContext): Future[Unit] =
-    Future(events.foreach(e => produce(e.address, e.event)))
+    Future(events.foreach(e => eventBusWriter.write(e.address, e.event)))
 }
 
 trait AtLeastOnceDelivery extends MessageDelivery {
+  def eventBusWriter: EventBusSender
   def confirmationTimeout: FiniteDuration
 
   override def deliver(events: Seq[EventEnvelope])(implicit ec: ExecutionContext): Future[Unit] =
-    Future.sequence(events.map(e => produce[Unit](e.address, e.event, confirmationTimeout))).map(_ => Unit)
+    Future.sequence(events.map(e => eventBusWriter.send[Unit](e.address, e.event, confirmationTimeout))).map(_ => Unit)
 }
 
 trait ProgressStore[R, W] {

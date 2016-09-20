@@ -27,22 +27,37 @@ object VertxAdapterSystemConfig {
 
   private def apply(adapterConfigurations: Seq[VertxAdapterConfig], codecClasses: Seq[Class[_]]): VertxAdapterSystemConfig = {
     validateConfigurations(adapterConfigurations) match {
-      case \/-(cs) =>
+      case Success(cs) =>
         new VertxAdapterSystemConfig(cs, codecClasses)
-      case -\/(errs) =>
-        throw new IllegalArgumentException(s"Invalid configuration given. Cause:\n${errs.mkString("\n")}")
+      case Failure(errs) =>
+        throw new IllegalArgumentException(s"Invalid configuration given. Cause(s):\n${errs.toList.map(e => s"- $e").mkString("\n")}")
     }
   }
 
-  private def validateConfigurations(configs: Seq[VertxAdapterConfig]): \/[Seq[String], Seq[VertxAdapterConfig]] = {
+  private def validateConfigurations(configs: Seq[VertxAdapterConfig]): ValidationNel[String, Seq[VertxAdapterConfig]] = {
+    (validateConfigurationIds(configs)
+      |@| validateWriteConfigurationEndpoints(configs))((_, _) => configs)
+  }
+
+  private def validateConfigurationIds(configs: Seq[VertxAdapterConfig]): ValidationNel[String, Seq[VertxAdapterConfig]] = {
     val invalid = configs.groupBy(_.id).filter(c => c._2.size > 1)
 
     if (invalid.isEmpty)
-      configs.right
+      configs.successNel
     else
-      invalid.map(c => s"Ambigious definition for adapter with id '${c._1}' given. An id may only be used once.")
-        .toVector
-        .left
+      (s"Ambigious definition for adapter(s) [${invalid.keys.map(id => s"'$id'").mkString(", ")}] given. " +
+        s"An id may only be used uniquely for a single adapter.").failureNel
+  }
+
+  private def validateWriteConfigurationEndpoints(configs: Seq[VertxAdapterConfig]): ValidationNel[String, Seq[VertxAdapterConfig]] = {
+    val invalid = configs.collect({ case c: VertxWriteAdapterConfig => c }).flatMap(_.endpoints).groupBy(identity).filter(c => c._2.size > 1)
+
+    if (invalid.isEmpty)
+      configs.successNel
+    else
+      (s"Invalid write-adapter configurations given. Endpoint(s) " +
+        s"[${invalid.keys.map(e => s"'$e'").mkString(",")}] were configured multiple times. " +
+        s"An endpoint may only be configured once.").failureNel
   }
 }
 

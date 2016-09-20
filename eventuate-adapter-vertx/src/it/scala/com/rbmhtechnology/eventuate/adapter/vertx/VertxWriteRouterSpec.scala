@@ -21,7 +21,7 @@ import java.util.UUID
 import akka.actor.{Actor, ActorRef, ActorSystem, Props}
 import akka.testkit.{TestKit, TestProbe}
 import com.rbmhtechnology.eventuate.EventsourcingProtocol._
-import com.rbmhtechnology.eventuate.adapter.vertx.api.{VertxAdapterConfig, VertxWriteAdapterConfig}
+import com.rbmhtechnology.eventuate.adapter.vertx.VertxWriteRouter.{WriteRoute, Writer}
 import com.rbmhtechnology.eventuate.utilities._
 import com.rbmhtechnology.eventuate.{EventsourcedView, SingleLocationSpecLeveldb}
 import io.vertx.core.eventbus.{Message, ReplyException}
@@ -53,15 +53,16 @@ object VertxWriteRouterSpec {
         eventLog forward cmd
     }
   }
+
 }
 
 class VertxWriteRouterSpec extends TestKit(ActorSystem("test", VertxPublisherSpec.Config))
   with WordSpecLike with MustMatchers with SingleLocationSpecLeveldb with StopSystemAfterAll with VertxEnvironment {
 
-  import utilities._
   import VertxHandlerConverters._
   import VertxWriteRouterSpec._
   import system.dispatcher
+  import utilities._
 
   var logA: ActorRef = _
   var logB: ActorRef = _
@@ -92,8 +93,8 @@ class VertxWriteRouterSpec extends TestKit(ActorSystem("test", VertxPublisherSpe
   def logReader(id: String, log: ActorRef, receiver: ActorRef): ActorRef =
     system.actorOf(Props(new LogReader(id, log, receiver)))
 
-  def writeRouter(configs: VertxWriteAdapterConfig*): ActorRef = {
-    val actor = system.actorOf(VertxWriteRouter.props(configs.toVector, vertx))
+  def writeRouter(routes: WriteRoute*): ActorRef = {
+    val actor = system.actorOf(VertxWriteRouter.props(routes.toVector, vertx))
     waitForStartup()
     actor
   }
@@ -112,7 +113,7 @@ class VertxWriteRouterSpec extends TestKit(ActorSystem("test", VertxPublisherSpe
     "receiving events from the eventbus" must {
       "route events from a single source-endpoint to a single target-log" in {
         writeRouter(
-          VertxAdapterConfig.fromEndpoints(endpoint1).writeTo(logA).as("id1")
+          WriteRoute(endpoint1, Writer("id1", logA))
         )
 
         persist(endpoint1, "ev-1")
@@ -124,7 +125,8 @@ class VertxWriteRouterSpec extends TestKit(ActorSystem("test", VertxPublisherSpe
       }
       "route events from multiple source-endpoints to a single target-log" in {
         writeRouter(
-          VertxAdapterConfig.fromEndpoints(endpoint1, endpoint2).writeTo(logA).as("id1")
+          WriteRoute(endpoint1, Writer("id1", logA)),
+          WriteRoute(endpoint2, Writer("id1", logA))
         )
 
         persist(endpoint1, "ev-1")
@@ -136,8 +138,8 @@ class VertxWriteRouterSpec extends TestKit(ActorSystem("test", VertxPublisherSpe
       }
       "route events from multiple source-endpoints to multiple target-logs" in {
         writeRouter(
-          VertxAdapterConfig.fromEndpoints(endpoint1).writeTo(logA).as("id-a"),
-          VertxAdapterConfig.fromEndpoints(endpoint2).writeTo(logB).as("id-b")
+          WriteRoute(endpoint1, Writer("id-a", logA)),
+          WriteRoute(endpoint2, Writer("id-b", logB))
         )
 
         persist(endpoint1, "ev-a1")
@@ -154,32 +156,9 @@ class VertxWriteRouterSpec extends TestKit(ActorSystem("test", VertxPublisherSpe
           ReadEvent(emitterId = "id-b", event = "ev-b1"),
           ReadEvent(emitterId = "id-b", event = "ev-b2"))
       }
-      "route events from a single source-endpoint to multiple target-logs" in {
-        writeRouter(
-          VertxAdapterConfig.fromEndpoints(endpoint1).writeTo(logA).as("id-a"),
-          VertxAdapterConfig.fromEndpoints(endpoint1).writeTo(logB).as("id-b")
-        )
-
-        persist(endpoint1, "ev-1")
-
-        logAProbe.expectMsg(ReadEvent(emitterId = "id-a", event = "ev-1"))
-        logBProbe.expectMsg(ReadEvent(emitterId = "id-b", event = "ev-1"))
-      }
-      "route events from a single source-endpoint to a single target-log with multiple ids" in {
-        writeRouter(
-          VertxAdapterConfig.fromEndpoints(endpoint1).writeTo(logA).as("id-a1"),
-          VertxAdapterConfig.fromEndpoints(endpoint1).writeTo(logA).as("id-a2")
-        )
-
-        persist(endpoint1, "ev-1")
-
-        logAProbe.receiveInAnyOrder(
-          ReadEvent(emitterId = "id-a1", event = "ev-1"),
-          ReadEvent(emitterId = "id-a2", event = "ev-1"))
-      }
       "filter events from a single source-endpoint to a single target-log" in {
         writeRouter(
-          VertxAdapterConfig.fromEndpoints(endpoint1).writeTo(logA, { case s: String if !s.contains("filter") => true }).as("id-a1")
+          WriteRoute(endpoint1, Writer("id-a1", logA), { case s: String if !s.contains("filter") => true })
         )
 
         persist(endpoint1, "ev-1")
@@ -191,34 +170,9 @@ class VertxWriteRouterSpec extends TestKit(ActorSystem("test", VertxPublisherSpe
           ReadEvent(emitterId = "id-a1", event = "ev-1"),
           ReadEvent(emitterId = "id-a1", event = "ev-3"))
       }
-      "filter events from a single source-endpoint to multiple target-logs" in {
-        writeRouter(
-          VertxAdapterConfig.fromEndpoints(endpoint1).writeTo(logA, { case s: String if s.contains("a") => true }).as("id-a"),
-          VertxAdapterConfig.fromEndpoints(endpoint1).writeTo(logB, { case s: String if s.contains("b") => true }).as("id-b")
-        )
-
-        persist(endpoint1, "ev-a1")
-        persist(endpoint1, "ev-b1")
-
-        logAProbe.expectMsg(ReadEvent(emitterId = "id-a", event = "ev-a1"))
-        logBProbe.expectMsg(ReadEvent(emitterId = "id-b", event = "ev-b1"))
-      }
-      "filter events from a single source-endpoint to a single target-logs with multiple ids" in {
-        writeRouter(
-          VertxAdapterConfig.fromEndpoints(endpoint1).writeTo(logA, { case s: String if s.contains("a") => true }).as("id-a"),
-          VertxAdapterConfig.fromEndpoints(endpoint1).writeTo(logA, { case s: String if s.contains("b") => true }).as("id-b")
-        )
-
-        persist(endpoint1, "ev-a1")
-        persist(endpoint1, "ev-b1")
-
-        logAProbe.receiveInAnyOrder(
-          ReadEvent(emitterId = "id-a", event = "ev-a1"),
-          ReadEvent(emitterId = "id-b", event = "ev-b1"))
-      }
       "respond with the event in case of success" in {
         writeRouter(
-          VertxAdapterConfig.fromEndpoints(endpoint1).writeTo(logA).as("id1")
+          WriteRoute(endpoint1, Writer("id1", logA))
         )
 
         persist(endpoint1, "ev-1").await must be("ev-1")
@@ -226,7 +180,7 @@ class VertxWriteRouterSpec extends TestKit(ActorSystem("test", VertxPublisherSpe
       }
       "respond with a success for filtered events" in {
         writeRouter(
-          VertxAdapterConfig.fromEndpoints(endpoint1).writeTo(logA, { case s: String if !s.contains("filter") => true }).as("id-a1")
+          WriteRoute(endpoint1, Writer("id-a1", logA), { case s: String if !s.contains("filter") => true })
         )
 
         persist(endpoint1, "ev-1-filter").await must be("ev-1-filter")
@@ -236,7 +190,7 @@ class VertxWriteRouterSpec extends TestKit(ActorSystem("test", VertxPublisherSpe
       }
       "respond with the failure in case of an error" in {
         writeRouter(
-          VertxAdapterConfig.fromEndpoints(endpoint1).writeTo(logA).as("id1")
+          WriteRoute(endpoint1, Writer("id1", logA))
         )
 
         persist("invalid-endpoint", "ev-1").failed.await mustBe a[ReplyException]
@@ -245,7 +199,7 @@ class VertxWriteRouterSpec extends TestKit(ActorSystem("test", VertxPublisherSpe
     "encountering an error while persisting events" must {
       "return a failure for a failed event" in {
         writeRouter(
-          VertxAdapterConfig.fromEndpoints(endpoint1).writeTo(failingWriteLog(logA, Seq("ev-fail"))).as("id1")
+          WriteRoute(endpoint1, Writer("id1", failingWriteLog(logA, Seq("ev-fail"))))
         )
 
         persist(endpoint1, "ev-1").await must be("ev-1")
