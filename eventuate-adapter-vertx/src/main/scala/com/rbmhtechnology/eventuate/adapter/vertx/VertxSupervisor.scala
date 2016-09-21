@@ -21,13 +21,13 @@ import akka.actor.{ Actor, Props }
 import scala.collection.immutable.Seq
 
 private[vertx] object VertxSupervisor {
-  def props(logAdapters: Seq[Props]): Props =
-    Props(new VertxSupervisor(logAdapters))
+  def props(adapters: Seq[Props]): Props =
+    Props(new VertxSupervisor(adapters))
 }
 
-private[vertx] class VertxSupervisor(logAdapters: Seq[Props]) extends Actor {
+private[vertx] class VertxSupervisor(adapters: Seq[Props]) extends Actor {
 
-  val logAdapterActors = logAdapters.map(context.actorOf)
+  val adapterActors = adapters.map(context.actorOf)
 
   override def receive: Receive = Actor.emptyBehavior
 }

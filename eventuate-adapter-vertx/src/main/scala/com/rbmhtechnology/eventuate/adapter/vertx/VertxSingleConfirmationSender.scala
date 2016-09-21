@@ -18,7 +18,7 @@ package com.rbmhtechnology.eventuate.adapter.vertx
 
 import akka.actor.{ ActorLogging, ActorRef, Props }
 import akka.pattern.pipe
-import com.rbmhtechnology.eventuate.adapter.vertx.api.VertxEndpointRouter
+import com.rbmhtechnology.eventuate.adapter.vertx.api.EndpointRouter
 import com.rbmhtechnology.eventuate.{ ConfirmedDelivery, EventsourcedActor }
 import io.vertx.core.Vertx
 
@@ -27,19 +27,19 @@ import scala.util.{ Failure, Success }
 
 private[vertx] object VertxSingleConfirmationSender {
 
-  case class DeliverEvent(event: EventEnvelope, deliveryId: String)
+  case class DeliverMessage(msg: MessageEnvelope, deliveryId: String)
   case class Confirm(deliveryId: String)
-  case class DeliverFailed(event: EventEnvelope, deliveryId: String, err: Throwable)
+  case class DeliverFailed(msg: MessageEnvelope, deliveryId: String, err: Throwable)
   case object Redeliver
 
   case class DeliveryConfirmed()
 
-  def props(id: String, eventLog: ActorRef, endpointRouter: VertxEndpointRouter, vertx: Vertx, confirmationTimeout: FiniteDuration): Props =
+  def props(id: String, eventLog: ActorRef, endpointRouter: EndpointRouter, vertx: Vertx, confirmationTimeout: FiniteDuration): Props =
     Props(new VertxSingleConfirmationSender(id, eventLog, endpointRouter, vertx, confirmationTimeout))
 }
 
-private[vertx] class VertxSingleConfirmationSender(val id: String, val eventLog: ActorRef, val endpointRouter: VertxEndpointRouter, val vertx: Vertx, confirmationTimeout: FiniteDuration)
-  extends EventsourcedActor with MessageSender with ConfirmedDelivery with ActorLogging {
+private[vertx] class VertxSingleConfirmationSender(val id: String, val eventLog: ActorRef, val endpointRouter: EndpointRouter, val vertx: Vertx, confirmationTimeout: FiniteDuration)
+  extends EventsourcedActor with ConfirmedDelivery with VertxMessageSender with ActorLogging {
 
   import VertxSingleConfirmationSender._
   import context.dispatcher
@@ -47,8 +47,8 @@ private[vertx] class VertxSingleConfirmationSender(val id: String, val eventLog:
   context.system.scheduler.schedule(confirmationTimeout, confirmationTimeout, self, Redeliver)
 
   override def onCommand: Receive = {
-    case DeliverEvent(envelope, deliveryId) =>
-      eventBusWriter.send[Unit](envelope.address, envelope.event, confirmationTimeout)
+    case DeliverMessage(envelope, deliveryId) =>
+      send[Unit](envelope.address, envelope.msg, confirmationTimeout)
         .map(_ => Confirm(deliveryId))
         .recover {
           case err => DeliverFailed(envelope, deliveryId, err)
@@ -58,14 +58,14 @@ private[vertx] class VertxSingleConfirmationSender(val id: String, val eventLog:
     case Confirm(deliveryId) if unconfirmed.contains(deliveryId) =>
       persistConfirmation(DeliveryConfirmed(), deliveryId) {
         case Success(evt) =>
-        case Failure(err) => throw new RuntimeException(err)
+        case Failure(err) => log.error(s"Confirmation for delivery with id '$deliveryId' could not be persisted.", err)
       }
 
     case Redeliver =>
       redeliverUnconfirmed()
 
-    case DeliverFailed(event, deliveryId, err) =>
-      log.warning(s"Delivery with id '$deliveryId' for event [$event] failed with $err. The delivery will be retried.")
+    case DeliverFailed(msg, deliveryId, err) =>
+      log.warning(s"Delivery with id '$deliveryId' for message [$msg] failed with $err. The delivery will be retried.")
   }
 
   override def onEvent: Receive = {
@@ -75,7 +75,7 @@ private[vertx] class VertxSingleConfirmationSender(val id: String, val eventLog:
       endpointRouter.endpoint(ev) match {
         case Some(endpoint) =>
           val deliveryId = lastSequenceNr.toString
-          deliver(deliveryId, DeliverEvent(EventEnvelope(endpoint, ev), deliveryId), self.path)
+          deliver(deliveryId, DeliverMessage(MessageEnvelope(endpoint, ev), deliveryId), self.path)
         case None =>
       }
   }

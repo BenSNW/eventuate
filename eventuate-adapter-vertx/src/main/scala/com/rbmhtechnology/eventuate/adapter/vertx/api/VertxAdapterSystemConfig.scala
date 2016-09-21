@@ -17,8 +17,6 @@
 package com.rbmhtechnology.eventuate.adapter.vertx.api
 
 import scala.collection.immutable.Seq
-import scalaz.Scalaz._
-import scalaz._
 
 object VertxAdapterSystemConfig {
 
@@ -27,50 +25,50 @@ object VertxAdapterSystemConfig {
 
   private def apply(adapterConfigurations: Seq[VertxAdapterConfig], codecClasses: Seq[Class[_]]): VertxAdapterSystemConfig = {
     validateConfigurations(adapterConfigurations) match {
-      case Success(cs) =>
+      case Right(cs) =>
         new VertxAdapterSystemConfig(cs, codecClasses)
-      case Failure(errs) =>
-        throw new IllegalArgumentException(s"Invalid configuration given. Cause(s):\n${errs.toList.map(e => s"- $e").mkString("\n")}")
+      case Left(err) =>
+        throw new IllegalArgumentException(s"Invalid configuration given. Cause: $err")
     }
   }
 
-  private def validateConfigurations(configs: Seq[VertxAdapterConfig]): ValidationNel[String, Seq[VertxAdapterConfig]] = {
-    (validateConfigurationIds(configs)
-      |@| validateWriteConfigurationEndpoints(configs))((_, _) => configs)
+  private def validateConfigurations(configs: Seq[VertxAdapterConfig]): Either[String, Seq[VertxAdapterConfig]] = {
+    for {
+      _ <- validateConfigurationIds(configs).right
+      _ <- validateLogWriterConfigurationEndpoints(configs).right
+    } yield configs
   }
 
-  private def validateConfigurationIds(configs: Seq[VertxAdapterConfig]): ValidationNel[String, Seq[VertxAdapterConfig]] = {
+  private def validateConfigurationIds(configs: Seq[VertxAdapterConfig]): Either[String, Seq[VertxAdapterConfig]] = {
     val invalid = configs.groupBy(_.id).filter(c => c._2.size > 1)
 
     if (invalid.isEmpty)
-      configs.successNel
+      Right(configs)
     else
-      (s"Ambigious definition for adapter(s) [${invalid.keys.map(id => s"'$id'").mkString(", ")}] given. " +
-        s"An id may only be used uniquely for a single adapter.").failureNel
+      Left(s"Ambigious definition for adapter(s) [${invalid.keys.map(id => s"'$id'").mkString(", ")}] given. " +
+        s"An id must be used uniquely for a single adapter.")
   }
 
-  private def validateWriteConfigurationEndpoints(configs: Seq[VertxAdapterConfig]): ValidationNel[String, Seq[VertxAdapterConfig]] = {
-    val invalid = configs.collect({ case c: VertxWriteAdapterConfig => c }).flatMap(_.endpoints).groupBy(identity).filter(c => c._2.size > 1)
+  private def validateLogWriterConfigurationEndpoints(configs: Seq[VertxAdapterConfig]): Either[String, Seq[VertxAdapterConfig]] = {
+    val invalid = configs.collect({ case c: LogWriterConfig => c }).flatMap(_.endpoints).groupBy(identity).filter(c => c._2.size > 1)
 
     if (invalid.isEmpty)
-      configs.successNel
+      Right(configs)
     else
-      (s"Invalid write-adapter configurations given. Endpoint(s) " +
-        s"[${invalid.keys.map(e => s"'$e'").mkString(",")}] were configured multiple times. " +
-        s"An endpoint may only be configured once.").failureNel
+      Left(s"Source-endpoint(s) [${invalid.keys.map(e => s"'$e'").mkString(",")}] were configured multiple times. " +
+        s"A source-endpoint may only be configured once.")
   }
 }
 
-class VertxAdapterSystemConfig(private[vertx] val configurations: Seq[VertxAdapterConfig],
-  private[vertx] val codecClasses: Seq[Class[_]]) {
-  val readAdapters: Seq[VertxReadAdapterConfig] =
-    configurations.collect({ case c: VertxReadAdapterConfig => c })
+class VertxAdapterSystemConfig(private[vertx] val configurations: Seq[VertxAdapterConfig], private[vertx] val codecClasses: Seq[Class[_]]) {
+  val vertxWriterConfigurations: Seq[VertxWriterConfig] =
+    configurations.collect({ case c: VertxWriterConfig => c })
 
-  val writeAdapters: Seq[VertxWriteAdapterConfig] =
-    configurations.collect({ case c: VertxWriteAdapterConfig => c })
+  val logWriterConfigurations: Seq[LogWriterConfig] =
+    configurations.collect({ case c: LogWriterConfig => c })
 
-  def addAdapter(first: VertxAdapterConfig, rest: VertxAdapterConfig*): VertxAdapterSystemConfig =
-    addAdapters(first +: rest.toVector)
+  def addAdapter(adapterConfiguration: VertxAdapterConfig): VertxAdapterSystemConfig =
+    addAdapters(Seq(adapterConfiguration))
 
   def addAdapters(adapterConfigurations: Seq[VertxAdapterConfig]): VertxAdapterSystemConfig =
     VertxAdapterSystemConfig(configurations ++ adapterConfigurations, codecClasses)

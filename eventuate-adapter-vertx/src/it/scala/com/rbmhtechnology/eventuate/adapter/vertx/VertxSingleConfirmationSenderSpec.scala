@@ -19,7 +19,7 @@ package com.rbmhtechnology.eventuate.adapter.vertx
 import akka.actor.{ActorRef, ActorSystem}
 import akka.testkit.{TestKit, TestProbe}
 import com.rbmhtechnology.eventuate.SingleLocationSpecLeveldb
-import com.rbmhtechnology.eventuate.adapter.vertx.api.VertxEndpointRouter
+import com.rbmhtechnology.eventuate.adapter.vertx.api.EndpointRouter
 import org.scalatest.{MustMatchers, WordSpecLike}
 
 import scala.concurrent.duration._
@@ -33,13 +33,13 @@ class VertxSingleConfirmationSenderSpec extends TestKit(ActorSystem("test", Vert
   val redeliverDelay = 1.seconds
   val inboundLogId = "log_inbound_confirm"
 
-  def startLogAdapter(endpointRouter: VertxEndpointRouter): ActorRef =
+  def vertxSingleConfirmationSender(endpointRouter: EndpointRouter): ActorRef =
     system.actorOf(VertxSingleConfirmationSender.props(inboundLogId, log, endpointRouter, vertx, redeliverDelay))
 
   "A VertxSingleConfirmationSender" when {
     "reading events from an event log" must {
       "deliver the events to a single consumer" in {
-        startLogAdapter(VertxEndpointRouter.routeAllTo(endpoint1))
+        vertxSingleConfirmationSender(EndpointRouter.routeAllTo(endpoint1))
         writeEvents("e", 5)
 
         endpoint1Probe.expectVertxMsg(body = "e-1")
@@ -49,7 +49,7 @@ class VertxSingleConfirmationSenderSpec extends TestKit(ActorSystem("test", Vert
         endpoint1Probe.expectVertxMsg(body = "e-5")
       }
       "redeliver all unconfirmed events" in {
-        startLogAdapter(VertxEndpointRouter.routeAllTo(endpoint1))
+        vertxSingleConfirmationSender(EndpointRouter.routeAllTo(endpoint1))
         writeEvents("e", 2)
 
         endpoint1Probe.expectVertxMsg(body = "e-1")
@@ -62,7 +62,7 @@ class VertxSingleConfirmationSenderSpec extends TestKit(ActorSystem("test", Vert
         endpoint1Probe.expectVertxMsg(body = "e-2")
       }
       "redeliver only unconfirmed events" in {
-        startLogAdapter(VertxEndpointRouter.routeAllTo(endpoint1))
+        vertxSingleConfirmationSender(EndpointRouter.routeAllTo(endpoint1))
         writeEvents("e", 5)
 
         endpoint1Probe.expectVertxMsg(body = "e-1")
@@ -75,7 +75,7 @@ class VertxSingleConfirmationSenderSpec extends TestKit(ActorSystem("test", Vert
         endpoint1Probe.expectVertxMsg(body = "e-5")
       }
       "redeliver only unconfirmed events while processing new events" in {
-        startLogAdapter(VertxEndpointRouter.routeAllTo(endpoint1))
+        vertxSingleConfirmationSender(EndpointRouter.routeAllTo(endpoint1))
         writeEvents("e", 3)
 
         endpoint1Probe.expectVertxMsg(body = "e-1")
@@ -92,7 +92,7 @@ class VertxSingleConfirmationSenderSpec extends TestKit(ActorSystem("test", Vert
         endpoint1Probe.expectVertxMsg(body = "e-5")
       }
       "deliver selected events only" in {
-        startLogAdapter(VertxEndpointRouter.route {
+        vertxSingleConfirmationSender(EndpointRouter.route {
           case ev: String if isOddEvent(ev, "e") => endpoint1
         })
         writeEvents("e", 10)
@@ -104,7 +104,7 @@ class VertxSingleConfirmationSenderSpec extends TestKit(ActorSystem("test", Vert
         endpoint1Probe.expectVertxMsg(body = "e-9").confirm()
       }
       "route events to different endpoints" in {
-        startLogAdapter(VertxEndpointRouter.route {
+        vertxSingleConfirmationSender(EndpointRouter.route {
           case ev: String if isEvenEvent(ev, "e") => endpoint1
           case ev: String if isOddEvent(ev, "e") => endpoint2
         })
@@ -123,7 +123,7 @@ class VertxSingleConfirmationSenderSpec extends TestKit(ActorSystem("test", Vert
         endpoint2Probe.expectVertxMsg(body = "e-9").confirm()
       }
       "deliver no events if the routing does not match" in {
-        startLogAdapter(VertxEndpointRouter.route {
+        vertxSingleConfirmationSender(EndpointRouter.route {
           case "i-will-never-match" => endpoint1
         })
         writeEvents("e", 10)

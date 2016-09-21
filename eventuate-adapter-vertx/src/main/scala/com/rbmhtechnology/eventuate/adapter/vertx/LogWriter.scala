@@ -17,15 +17,33 @@
 package com.rbmhtechnology.eventuate.adapter.vertx
 
 import akka.actor.{ ActorRef, Props }
-import com.rbmhtechnology.eventuate.adapter.vertx.api.{ StorageProvider, EndpointRouter }
-import io.vertx.core.Vertx
+import com.rbmhtechnology.eventuate.EventsourcedActor
+import io.vertx.core.eventbus.Message
 
-private[eventuate] object VertxSender {
-  def props(id: String, eventLog: ActorRef, endpointRouter: EndpointRouter, vertx: Vertx, storageProvider: StorageProvider): Props =
-    Props(new VertxSender(id, eventLog, endpointRouter, vertx, storageProvider))
-      .withDispatcher("eventuate.log.dispatchers.write-dispatcher")
+import scala.util.{ Failure, Success }
+
+private[vertx] object LogWriter {
+
+  case class PersistMessage(message: Message[Any])
+
+  def props(id: String, eventLog: ActorRef): Props =
+    Props(new LogWriter(id, eventLog))
 }
 
-private[eventuate] class VertxSender(val id: String, val eventLog: ActorRef, val endpointRouter: EndpointRouter, val vertx: Vertx, val storageProvider: StorageProvider)
-  extends VertxWriter[Long, Long] with AtMostOnceDelivery with VertxMessageSender with SequenceNumberProgressStore {
+private[vertx] class LogWriter(val id: String, val eventLog: ActorRef) extends EventsourcedActor {
+  import LogWriter._
+
+  override def stateSync: Boolean = false
+
+  override def onCommand: Receive = {
+    case PersistMessage(msg) =>
+      persist(msg.body()) {
+        case Success(res) => msg.reply(res)
+        case Failure(err) => msg.fail(0, err.getMessage)
+      }
+  }
+
+  override def onEvent: Receive = {
+    case _ =>
+  }
 }

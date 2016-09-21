@@ -16,34 +16,90 @@
 
 package com.rbmhtechnology.eventuate.adapter.vertx
 
-import akka.actor.{ ActorRef, Props }
-import com.rbmhtechnology.eventuate.EventsourcedActor
-import io.vertx.core.eventbus.Message
+import com.rbmhtechnology.eventuate.EventsourcedWriter
+import com.rbmhtechnology.eventuate.adapter.vertx.api.EndpointRouter
+import io.vertx.core.Vertx
+import io.vertx.core.eventbus.{ DeliveryOptions, Message }
 
-import scala.util.{ Failure, Success }
+import scala.collection.immutable.Seq
+import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.{ ExecutionContext, Future, Promise }
 
-private[vertx] object VertxWriter {
+case class MessageEnvelope(address: String, msg: Any)
 
-  case class PersistMessage(payload: Any, message: Message[Any])
-
-  def props(id: String, eventLog: ActorRef): Props =
-    Props(new VertxWriter(id, eventLog))
+trait MessagePublisher {
+  def publish(address: String, msg: Any): Unit
 }
 
-private[vertx] class VertxWriter(val id: String, val eventLog: ActorRef) extends EventsourcedActor {
-  import VertxWriter._
+trait MessageSender {
+  def send[A](address: String, msg: Any, timeout: FiniteDuration)(implicit ec: ExecutionContext): Future[A]
+}
 
-  override def stateSync: Boolean = false
+trait MessageDelivery {
+  def deliver(messages: Seq[MessageEnvelope])(implicit ec: ExecutionContext): Future[Unit]
+}
+
+trait AtMostOnceDelivery extends MessageDelivery with MessagePublisher {
+  override def deliver(messages: Seq[MessageEnvelope])(implicit ec: ExecutionContext): Future[Unit] =
+    Future(messages.foreach(e => publish(e.address, e.msg)))
+}
+
+trait AtLeastOnceDelivery extends MessageDelivery with MessageSender {
+  def confirmationTimeout: FiniteDuration
+
+  override def deliver(messages: Seq[MessageEnvelope])(implicit ec: ExecutionContext): Future[Unit] =
+    Future.sequence(messages.map(e => send[Unit](e.address, e.msg, confirmationTimeout))).map(_ => Unit)
+}
+
+trait VertxMessageProducer {
+  def vertx: Vertx
+}
+
+trait VertxMessagePublisher extends VertxMessageProducer with MessagePublisher {
+  override def publish(address: String, msg: Any): Unit =
+    vertx.eventBus().publish(address, msg)
+}
+
+trait VertxMessageSender extends VertxMessagePublisher with MessageSender {
+  import VertxHandlerConverters._
+
+  override def send[A](address: String, msg: Any, timeout: FiniteDuration)(implicit ec: ExecutionContext): Future[A] = {
+    val promise = Promise[Message[A]]
+    vertx.eventBus().send(address, msg, new DeliveryOptions().setSendTimeout(timeout.toMillis), promise.asVertxHandler)
+    promise.future.map(_.body)
+  }
+}
+
+trait VertxWriter[R, W] extends EventsourcedWriter[R, W] with MessageDelivery with ProgressStore[R, W] {
+  import context.dispatcher
+
+  def endpointRouter: EndpointRouter
+
+  var messages: Vector[MessageEnvelope] = Vector.empty
 
   override def onCommand: Receive = {
-    case PersistMessage(evt, msg) =>
-      persist(evt) {
-        case Success(res) => msg.reply(res)
-        case Failure(err) => msg.fail(0, err.getMessage)
-      }
+    case _ =>
   }
 
   override def onEvent: Receive = {
-    case _ =>
+    case ev =>
+      messages = endpointRouter.endpoint(ev) match {
+        case Some(endpoint) => messages :+ MessageEnvelope(endpoint, ev)
+        case None           => messages
+      }
   }
+
+  override def write(): Future[W] = {
+    val snr = lastSequenceNr
+    val ft = deliver(messages).flatMap(x => writeProgress(id, snr))
+
+    messages = Vector.empty
+    ft
+  }
+
+  override def read(): Future[R] =
+    readProgress(id)
+
+  override def readSuccess(result: R): Option[Long] =
+    Some(progress(result) + 1L)
 }

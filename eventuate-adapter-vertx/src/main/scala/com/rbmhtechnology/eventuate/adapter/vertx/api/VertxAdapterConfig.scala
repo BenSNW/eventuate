@@ -18,85 +18,84 @@ package com.rbmhtechnology.eventuate.adapter.vertx.api
 
 import akka.actor.ActorRef
 
-import scala.collection.immutable.Seq
 import scala.concurrent.duration.FiniteDuration
 
 sealed trait VertxAdapterConfig {
   def id: String
   def log: ActorRef
 }
-sealed trait VertxReadAdapterConfig extends VertxAdapterConfig {
-  def endpointRouter: VertxEndpointRouter
+sealed trait VertxWriterConfig extends VertxAdapterConfig {
+  def endpointRouter: EndpointRouter
 }
 
-case class VertxPublishAdapterConfig(id: String, log: ActorRef, endpointRouter: VertxEndpointRouter) extends VertxReadAdapterConfig
-case class VertxSendAdapterConfig(id: String, log: ActorRef, endpointRouter: VertxEndpointRouter, deliveryMode: DeliveryMode) extends VertxReadAdapterConfig
-case class VertxWriteAdapterConfig(id: String, log: ActorRef, endpoints: Seq[String], filter: PartialFunction[Any, Boolean]) extends VertxAdapterConfig
+case class VertxPublisherConfig(id: String, log: ActorRef, endpointRouter: EndpointRouter) extends VertxWriterConfig
+case class VertxSenderConfig(id: String, log: ActorRef, endpointRouter: EndpointRouter, deliveryMode: DeliveryMode) extends VertxWriterConfig
+case class LogWriterConfig(id: String, log: ActorRef, endpoints: Set[String], filter: PartialFunction[Any, Boolean]) extends VertxAdapterConfig
 
-sealed trait ConfirmationType {}
+sealed trait ConfirmationType
 case object Single extends ConfirmationType
 case class Batch(size: Int) extends ConfirmationType
 
-sealed trait DeliveryMode {}
+sealed trait DeliveryMode
 case object AtMostOnce extends DeliveryMode
 case class AtLeastOnce(confirmationType: ConfirmationType, confirmationTimeout: FiniteDuration) extends DeliveryMode
 
-object VertxEndpointRouter {
+object EndpointRouter {
 
-  def route(f: PartialFunction[Any, String]): VertxEndpointRouter =
-    new VertxEndpointRouter(f)
+  def route(f: PartialFunction[Any, String]): EndpointRouter =
+    new EndpointRouter(f)
 
-  def routeAllTo(s: String): VertxEndpointRouter =
-    new VertxEndpointRouter({ case _ => s })
+  def routeAllTo(s: String): EndpointRouter =
+    new EndpointRouter({ case _ => s })
 }
 
-class VertxEndpointRouter(f: PartialFunction[Any, String]) {
+class EndpointRouter(f: PartialFunction[Any, String]) {
   val endpoint: Any => Option[String] = f.lift
 }
 
 object VertxAdapterConfig {
 
-  def fromLog(log: ActorRef): VertxReadAdapterConfigFactory =
-    new VertxReadAdapterConfigFactory(log)
+  def fromLog(log: ActorRef): VertxWriterConfigFactory =
+    new VertxWriterConfigFactory(log)
 
-  def fromEndpoints(endpoints: String*): VertxWriteAdapterConfigFactory =
-    new VertxWriteAdapterConfigFactory(endpoints.toVector)
+  def fromEndpoints(endpoints: String*): LogWriterConfigFactory =
+    new LogWriterConfigFactory(endpoints.toSet)
 }
 
 trait CompletableVertxAdapterConfigFactory {
   def as(id: String): VertxAdapterConfig
 }
 
-class VertxReadAdapterConfigFactory(log: ActorRef) {
+class VertxWriterConfigFactory(log: ActorRef) {
 
-  def publishTo(routes: PartialFunction[Any, String]): VertxPublishAdapterConfigFactory =
-    new VertxPublishAdapterConfigFactory(log, VertxEndpointRouter.route(routes))
+  def publishTo(routes: PartialFunction[Any, String]): VertxPublisherConfigFactory =
+    new VertxPublisherConfigFactory(log, EndpointRouter.route(routes))
 
-  def sendTo(routes: PartialFunction[Any, String]): VertxSendAdapterConfigFactory =
-    new VertxSendAdapterConfigFactory(log, VertxEndpointRouter.route(routes))
+  def sendTo(routes: PartialFunction[Any, String]): VertxSenderConfigFactory =
+    new VertxSenderConfigFactory(log, EndpointRouter.route(routes))
 }
 
-class VertxPublishAdapterConfigFactory(log: ActorRef, endpoints: VertxEndpointRouter)
+class VertxPublisherConfigFactory(log: ActorRef, endpoints: EndpointRouter)
   extends CompletableVertxAdapterConfigFactory {
 
   override def as(id: String): VertxAdapterConfig =
-    VertxPublishAdapterConfig(id, log, endpoints)
+    VertxPublisherConfig(id, log, endpoints)
 }
 
-class VertxSendAdapterConfigFactory(log: ActorRef, endpointRouter: VertxEndpointRouter, deliveryMode: DeliveryMode = AtMostOnce)
+class VertxSenderConfigFactory(log: ActorRef, endpointRouter: EndpointRouter, deliveryMode: DeliveryMode = AtMostOnce)
   extends CompletableVertxAdapterConfigFactory {
 
-  def atLeastOnce(confirmationType: ConfirmationType, confirmationTimeout: FiniteDuration): VertxSendAdapterConfigFactory =
-    new VertxSendAdapterConfigFactory(log, endpointRouter, AtLeastOnce(confirmationType, confirmationTimeout))
+  def atLeastOnce(confirmationType: ConfirmationType, confirmationTimeout: FiniteDuration): VertxSenderConfigFactory =
+    new VertxSenderConfigFactory(log, endpointRouter, AtLeastOnce(confirmationType, confirmationTimeout))
 
   override def as(id: String): VertxAdapterConfig =
-    VertxSendAdapterConfig(id, log, endpointRouter, deliveryMode)
+    VertxSenderConfig(id, log, endpointRouter, deliveryMode)
 }
 
-class VertxWriteAdapterConfigFactory(endpoints: Seq[String]) {
+class LogWriterConfigFactory(endpoints: Set[String]) {
 
   def writeTo(log: ActorRef, filter: PartialFunction[Any, Boolean] = { case _ => true }) = new CompletableVertxAdapterConfigFactory {
-    override def as(id: String): VertxWriteAdapterConfig =
-      VertxWriteAdapterConfig(id, log, endpoints, filter)
+    override def as(id: String): LogWriterConfig =
+      LogWriterConfig(id, log, endpoints, filter)
   }
 }

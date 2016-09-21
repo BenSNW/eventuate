@@ -17,27 +17,27 @@
 package com.rbmhtechnology.eventuate.adapter.vertx
 
 import akka.actor.{ Actor, ActorRef, Props }
-import com.rbmhtechnology.eventuate.adapter.vertx.VertxWriteRouter.WriteRoute
-import com.rbmhtechnology.eventuate.adapter.vertx.VertxWriter.PersistMessage
+import com.rbmhtechnology.eventuate.adapter.vertx.LogRouter.LogRoute
+import com.rbmhtechnology.eventuate.adapter.vertx.LogWriter.PersistMessage
 import io.vertx.core.Vertx
 import io.vertx.core.eventbus.{ Message, MessageConsumer }
 
-object VertxWriteRouter {
+object LogRouter {
 
   case class Writer(id: String, log: ActorRef)
-  case class WriteRoute(sourceEndpoint: String, writer: Writer, filter: PartialFunction[Any, Boolean] = { case _ => true })
+  case class LogRoute(sourceEndpoint: String, writer: Writer, filter: PartialFunction[Any, Boolean] = { case _ => true })
 
-  def props(routes: Seq[WriteRoute], vertx: Vertx): Props =
-    Props(new VertxWriteRouter(routes, vertx))
+  def props(routes: Seq[LogRoute], vertx: Vertx): Props =
+    Props(new LogRouter(routes, vertx))
 }
 
-class VertxWriteRouter(routes: Seq[WriteRoute], vertx: Vertx) extends Actor {
+class LogRouter(routes: Seq[LogRoute], vertx: Vertx) extends Actor {
 
   import VertxHandlerConverters._
 
   val writers = routes
     .groupBy(_.writer)
-    .map { case (writer, _) => writer.id -> context.actorOf(VertxWriter.props(writer.id, writer.log)) }
+    .map { case (writer, _) => writer.id -> context.actorOf(LogWriter.props(writer.id, writer.log)) }
 
   val consumers = routes
     .map { r => installMessageConsumer(r.sourceEndpoint, writers(r.writer.id), r.filter) }
@@ -45,7 +45,7 @@ class VertxWriteRouter(routes: Seq[WriteRoute], vertx: Vertx) extends Actor {
   private def installMessageConsumer(endpoint: String, writer: ActorRef, filter: PartialFunction[Any, Boolean]): MessageConsumer[Any] = {
     val handler = (msg: Message[Any]) => {
       if (filter.applyOrElse(msg.body(), (_: Any) => false)) {
-        writer ! PersistMessage(msg.body(), msg)
+        writer ! PersistMessage(msg)
       } else {
         msg.reply(msg.body)
       }

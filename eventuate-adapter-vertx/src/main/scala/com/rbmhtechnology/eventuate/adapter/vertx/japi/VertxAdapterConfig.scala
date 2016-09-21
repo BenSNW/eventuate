@@ -26,17 +26,16 @@ import com.rbmhtechnology.eventuate.adapter.vertx.api._
 import com.rbmhtechnology.eventuate.adapter.vertx.api.{ VertxAdapterConfig => SVertxAdapterConfig }
 
 import scala.annotation.varargs
-import scala.collection.immutable.Seq
 import scala.concurrent.duration.FiniteDuration
 
 object VertxAdapterConfig {
 
-  def fromLog(log: ActorRef): VertxReadAdapterConfigFactory =
-    new VertxReadAdapterConfigFactory(log)
+  def fromLog(log: ActorRef): VertxWriterConfigFactory =
+    new VertxWriterConfigFactory(log)
 
   @varargs
-  def fromEndpoints(endpoints: String*): VertxWriteAdapterConfigFactory =
-    new VertxWriteAdapterConfigFactory(endpoints.toVector)
+  def fromEndpoints(endpoints: String*): LogWriterConfigFactory =
+    new LogWriterConfigFactory(endpoints.toSet)
 }
 
 class VertxAdapterConfig(private[vertx] val underlying: SVertxAdapterConfig)
@@ -45,52 +44,52 @@ abstract class CompletableVertxAdapterConfigFactory {
   def as(id: String): VertxAdapterConfig
 }
 
-class VertxReadAdapterConfigFactory(log: ActorRef) {
+class VertxWriterConfigFactory(log: ActorRef) {
   import JavaConfigConverters._
 
-  def publishTo(endpoint: String): VertxPublishAdapterConfigFactory =
-    new VertxPublishAdapterConfigFactory(log, new VertxEndpointRouter(endpoint.asPF))
+  def publishTo(endpoint: String): VertxPublisherConfigFactory =
+    new VertxPublisherConfigFactory(log, new EndpointRouter(endpoint.asPF))
 
-  def publishTo(routes: JFunction[Any, JOption[String]]): VertxPublishAdapterConfigFactory =
-    new VertxPublishAdapterConfigFactory(log, new VertxEndpointRouter(routes.asScala))
+  def publishTo(routes: JFunction[Any, JOption[String]]): VertxPublisherConfigFactory =
+    new VertxPublisherConfigFactory(log, new EndpointRouter(routes.asScala))
 
-  def sendTo(endpoint: String): VertxSendAdapterConfigFactory =
-    new VertxSendAdapterConfigFactory(log, new VertxEndpointRouter(endpoint.asPF))
+  def sendTo(endpoint: String): VertxSenderConfigFactory =
+    new VertxSenderConfigFactory(log, new EndpointRouter(endpoint.asPF))
 
-  def sendTo(routes: JFunction[Any, JOption[String]]): VertxSendAdapterConfigFactory =
-    new VertxSendAdapterConfigFactory(log, new VertxEndpointRouter(routes.asScala))
+  def sendTo(routes: JFunction[Any, JOption[String]]): VertxSenderConfigFactory =
+    new VertxSenderConfigFactory(log, new EndpointRouter(routes.asScala))
 }
 
-class VertxPublishAdapterConfigFactory(log: ActorRef, endpoints: VertxEndpointRouter)
+class VertxPublisherConfigFactory(log: ActorRef, endpoints: EndpointRouter)
   extends CompletableVertxAdapterConfigFactory {
   import JavaConfigConverters._
 
   override def as(id: String): VertxAdapterConfig =
-    VertxPublishAdapterConfig(id, log, endpoints).asJava
+    VertxPublisherConfig(id, log, endpoints).asJava
 }
 
-class VertxSendAdapterConfigFactory(log: ActorRef, endpointRouter: VertxEndpointRouter, deliveryMode: DeliveryMode = AtMostOnce)
+class VertxSenderConfigFactory(log: ActorRef, endpointRouter: EndpointRouter, deliveryMode: DeliveryMode = AtMostOnce)
   extends CompletableVertxAdapterConfigFactory {
   import JavaConfigConverters._
 
-  def atLeastOnce(confirmationType: ConfirmationType, confirmationTimeout: Duration): VertxSendAdapterConfigFactory =
-    new VertxSendAdapterConfigFactory(log, endpointRouter, AtLeastOnce(confirmationType.asScala, confirmationTimeout.asScala))
+  def atLeastOnce(confirmationType: ConfirmationType, confirmationTimeout: Duration): VertxSenderConfigFactory =
+    new VertxSenderConfigFactory(log, endpointRouter, AtLeastOnce(confirmationType.asScala, confirmationTimeout.asScala))
 
   override def as(id: String): VertxAdapterConfig =
-    VertxSendAdapterConfig(id, log, endpointRouter, deliveryMode).asJava
+    VertxSenderConfig(id, log, endpointRouter, deliveryMode).asJava
 }
 
-class VertxWriteAdapterConfigFactory(endpoints: Seq[String]) {
+class LogWriterConfigFactory(endpoints: Set[String]) {
   import JavaConfigConverters._
 
   def writeTo(log: ActorRef) = new CompletableVertxAdapterConfigFactory {
     override def as(id: String): VertxAdapterConfig =
-      VertxWriteAdapterConfig(id, log, endpoints, { case _ => true }).asJava
+      LogWriterConfig(id, log, endpoints, { case _ => true }).asJava
   }
 
   def writeTo(log: ActorRef, filter: Predicate[Any]) = new CompletableVertxAdapterConfigFactory {
     override def as(id: String): VertxAdapterConfig =
-      VertxWriteAdapterConfig(id, log, endpoints, toPF(filter)).asJava
+      LogWriterConfig(id, log, endpoints, toPF(filter)).asJava
   }
 
   private def toPF(p: Predicate[Any]): PartialFunction[Any, Boolean] = {

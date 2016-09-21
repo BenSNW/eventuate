@@ -17,7 +17,7 @@
 package com.rbmhtechnology.eventuate.adapter.vertx
 
 import akka.actor.{ ActorSystem, Props }
-import com.rbmhtechnology.eventuate.adapter.vertx.VertxWriteRouter.{ WriteRoute, Writer }
+import com.rbmhtechnology.eventuate.adapter.vertx.LogRouter.{ LogRoute, Writer }
 import com.rbmhtechnology.eventuate.adapter.vertx.api._
 import com.rbmhtechnology.eventuate.adapter.vertx.japi.rx.{ StorageProvider => RxStorageProvider }
 import com.rbmhtechnology.eventuate.adapter.vertx.japi.{ StorageProvider => JStorageProvider, VertxAdapterSystemConfig => JVertxAdapterSystemConfig }
@@ -54,7 +54,7 @@ class VertxAdapterSystem private[vertx] (config: VertxAdapterSystemConfig, vertx
         vertx.eventBus().registerDefaultCodec(c.asInstanceOf[Class[AnyRef]], AkkaSerializationMessageCodec(c))
       } catch {
         case e: IllegalStateException =>
-          system.log.warning(s"An adapter codec for class ${c.getName} was configured, even though a default codec was already registered for this class.")
+          throw new IllegalStateException(s"An adapter codec for class ${c.getName} was configured, even though a default codec was already registered for this class.")
       })
   }
 
@@ -64,29 +64,29 @@ class VertxAdapterSystem private[vertx] (config: VertxAdapterSystemConfig, vertx
   }
 
   private def adapters: Seq[Props] =
-    writeAdapters ++ readAdapters
+    vertxWriters ++ logWriters
 
-  private def readAdapters: Seq[Props] = config.readAdapters.map {
-    case VertxPublishAdapterConfig(id, log, endpointRouter) =>
+  private def vertxWriters: Seq[Props] = config.vertxWriterConfigurations.map {
+    case VertxPublisherConfig(id, log, endpointRouter) =>
       VertxPublisher.props(id, log, endpointRouter, vertx, storageProvider)
 
-    case VertxSendAdapterConfig(id, log, endpointRouter, AtMostOnce) =>
+    case VertxSenderConfig(id, log, endpointRouter, AtMostOnce) =>
       VertxSender.props(id, log, endpointRouter, vertx, storageProvider)
 
-    case VertxSendAdapterConfig(id, log, endpointRouter, AtLeastOnce(Single, timeout)) =>
+    case VertxSenderConfig(id, log, endpointRouter, AtLeastOnce(Single, timeout)) =>
       VertxSingleConfirmationSender.props(id, log, endpointRouter, vertx, timeout)
 
-    case VertxSendAdapterConfig(id, log, endpointRouter, AtLeastOnce(Batch(size), timeout)) =>
+    case VertxSenderConfig(id, log, endpointRouter, AtLeastOnce(Batch(size), timeout)) =>
       VertxBatchConfirmationSender.props(id, log, endpointRouter, vertx, storageProvider, size, timeout)
   }
 
-  private def writeAdapters: Seq[Props] = {
-    if (config.writeAdapters.nonEmpty)
-      Seq(VertxWriteRouter.props(toWriteRoutes(config.writeAdapters), vertx))
+  private def logWriters: Seq[Props] = {
+    if (config.logWriterConfigurations.nonEmpty)
+      Seq(LogRouter.props(toLogRoutes(config.logWriterConfigurations), vertx))
     else
       Seq.empty
   }
 
-  private def toWriteRoutes(configs: Seq[VertxWriteAdapterConfig]): Seq[WriteRoute] =
-    configs.flatMap(c => c.endpoints.distinct.map(e => WriteRoute(e, Writer(c.id, c.log), c.filter)))
+  private def toLogRoutes(configs: Seq[LogWriterConfig]): Seq[LogRoute] =
+    configs.flatMap(c => c.endpoints.map(e => LogRoute(e, Writer(c.id, c.log), c.filter)))
 }

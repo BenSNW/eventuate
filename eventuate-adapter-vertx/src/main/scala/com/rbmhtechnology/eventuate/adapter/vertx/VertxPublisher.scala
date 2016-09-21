@@ -17,15 +17,15 @@
 package com.rbmhtechnology.eventuate.adapter.vertx
 
 import akka.actor.{ ActorRef, Props }
-import com.rbmhtechnology.eventuate.adapter.vertx.api.{ StorageProvider, VertxEndpointRouter }
+import com.rbmhtechnology.eventuate.adapter.vertx.api.{ StorageProvider, EndpointRouter }
 import io.vertx.core.Vertx
 
 private[eventuate] object VertxPublisher {
-  def props(id: String, eventLog: ActorRef, endpointRouter: VertxEndpointRouter, vertx: Vertx, storageProvider: StorageProvider): Props =
+  def props(id: String, eventLog: ActorRef, endpointRouter: EndpointRouter, vertx: Vertx, storageProvider: StorageProvider): Props =
     Props(new VertxPublisher(id, eventLog, endpointRouter, vertx, storageProvider))
       .withDispatcher("eventuate.log.dispatchers.write-dispatcher")
 }
 
-private[eventuate] class VertxPublisher(val id: String, val eventLog: ActorRef, val endpointRouter: VertxEndpointRouter, val vertx: Vertx, val storageProvider: StorageProvider)
-  extends VertxReader[Long, Long] with AtMostOnceDelivery with MessagePublisher with SequenceNumberProgressStore {
+private[eventuate] class VertxPublisher(val id: String, val eventLog: ActorRef, val endpointRouter: EndpointRouter, val vertx: Vertx, val storageProvider: StorageProvider)
+  extends VertxWriter[Long, Long] with AtMostOnceDelivery with VertxMessagePublisher with SequenceNumberProgressStore {
 }

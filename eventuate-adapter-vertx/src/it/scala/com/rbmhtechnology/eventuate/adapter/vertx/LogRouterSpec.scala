@@ -21,7 +21,7 @@ import java.util.UUID
 import akka.actor.{Actor, ActorRef, ActorSystem, Props}
 import akka.testkit.{TestKit, TestProbe}
 import com.rbmhtechnology.eventuate.EventsourcingProtocol._
-import com.rbmhtechnology.eventuate.adapter.vertx.VertxWriteRouter.{WriteRoute, Writer}
+import com.rbmhtechnology.eventuate.adapter.vertx.LogRouter.{LogRoute, Writer}
 import com.rbmhtechnology.eventuate.utilities._
 import com.rbmhtechnology.eventuate.{EventsourcedView, SingleLocationSpecLeveldb}
 import io.vertx.core.eventbus.{Message, ReplyException}
@@ -30,7 +30,7 @@ import org.scalatest.{MustMatchers, WordSpecLike}
 import scala.collection.immutable.Seq
 import scala.concurrent.{Future, Promise}
 
-object VertxWriteRouterSpec {
+object LogRouterSpec {
 
   case class ReadEvent(emitterId: String, event: Any)
 
@@ -53,14 +53,13 @@ object VertxWriteRouterSpec {
         eventLog forward cmd
     }
   }
-
 }
 
-class VertxWriteRouterSpec extends TestKit(ActorSystem("test", VertxPublisherSpec.Config))
+class LogRouterSpec extends TestKit(ActorSystem("test", VertxPublisherSpec.Config))
   with WordSpecLike with MustMatchers with SingleLocationSpecLeveldb with StopSystemAfterAll with VertxEnvironment {
 
   import VertxHandlerConverters._
-  import VertxWriteRouterSpec._
+  import LogRouterSpec._
   import system.dispatcher
   import utilities._
 
@@ -93,8 +92,8 @@ class VertxWriteRouterSpec extends TestKit(ActorSystem("test", VertxPublisherSpe
   def logReader(id: String, log: ActorRef, receiver: ActorRef): ActorRef =
     system.actorOf(Props(new LogReader(id, log, receiver)))
 
-  def writeRouter(routes: WriteRoute*): ActorRef = {
-    val actor = system.actorOf(VertxWriteRouter.props(routes.toVector, vertx))
+  def logRouter(routes: LogRoute*): ActorRef = {
+    val actor = system.actorOf(LogRouter.props(routes.toVector, vertx))
     waitForStartup()
     actor
   }
@@ -109,11 +108,11 @@ class VertxWriteRouterSpec extends TestKit(ActorSystem("test", VertxPublisherSpe
     promise.future.map(_.body)
   }
 
-  "A VertxWriteRouter" when {
-    "receiving events from the eventbus" must {
+  "A LogRouter" when {
+    "receiving events from the event-bus" must {
       "route events from a single source-endpoint to a single target-log" in {
-        writeRouter(
-          WriteRoute(endpoint1, Writer("id1", logA))
+        logRouter(
+          LogRoute(endpoint1, Writer("id1", logA))
         )
 
         persist(endpoint1, "ev-1")
@@ -124,9 +123,9 @@ class VertxWriteRouterSpec extends TestKit(ActorSystem("test", VertxPublisherSpe
           ReadEvent(emitterId = "id1", event = "ev-2"))
       }
       "route events from multiple source-endpoints to a single target-log" in {
-        writeRouter(
-          WriteRoute(endpoint1, Writer("id1", logA)),
-          WriteRoute(endpoint2, Writer("id1", logA))
+        logRouter(
+          LogRoute(endpoint1, Writer("id1", logA)),
+          LogRoute(endpoint2, Writer("id1", logA))
         )
 
         persist(endpoint1, "ev-1")
@@ -137,9 +136,9 @@ class VertxWriteRouterSpec extends TestKit(ActorSystem("test", VertxPublisherSpe
           ReadEvent(emitterId = "id1", event = "ev-2"))
       }
       "route events from multiple source-endpoints to multiple target-logs" in {
-        writeRouter(
-          WriteRoute(endpoint1, Writer("id-a", logA)),
-          WriteRoute(endpoint2, Writer("id-b", logB))
+        logRouter(
+          LogRoute(endpoint1, Writer("id-a", logA)),
+          LogRoute(endpoint2, Writer("id-b", logB))
         )
 
         persist(endpoint1, "ev-a1")
@@ -157,8 +156,8 @@ class VertxWriteRouterSpec extends TestKit(ActorSystem("test", VertxPublisherSpe
           ReadEvent(emitterId = "id-b", event = "ev-b2"))
       }
       "filter events from a single source-endpoint to a single target-log" in {
-        writeRouter(
-          WriteRoute(endpoint1, Writer("id-a1", logA), { case s: String if !s.contains("filter") => true })
+        logRouter(
+          LogRoute(endpoint1, Writer("id-a1", logA), { case s: String if !s.contains("filter") => true })
         )
 
         persist(endpoint1, "ev-1")
@@ -171,16 +170,16 @@ class VertxWriteRouterSpec extends TestKit(ActorSystem("test", VertxPublisherSpe
           ReadEvent(emitterId = "id-a1", event = "ev-3"))
       }
       "respond with the event in case of success" in {
-        writeRouter(
-          WriteRoute(endpoint1, Writer("id1", logA))
+        logRouter(
+          LogRoute(endpoint1, Writer("id1", logA))
         )
 
         persist(endpoint1, "ev-1").await must be("ev-1")
         persist(endpoint1, "ev-2").await must be("ev-2")
       }
       "respond with a success for filtered events" in {
-        writeRouter(
-          WriteRoute(endpoint1, Writer("id-a1", logA), { case s: String if !s.contains("filter") => true })
+        logRouter(
+          LogRoute(endpoint1, Writer("id-a1", logA), { case s: String if !s.contains("filter") => true })
         )
 
         persist(endpoint1, "ev-1-filter").await must be("ev-1-filter")
@@ -189,8 +188,8 @@ class VertxWriteRouterSpec extends TestKit(ActorSystem("test", VertxPublisherSpe
         logAProbe.expectMsg(ReadEvent(emitterId = "id-a1", event = "ev-2"))
       }
       "respond with the failure in case of an error" in {
-        writeRouter(
-          WriteRoute(endpoint1, Writer("id1", logA))
+        logRouter(
+          LogRoute(endpoint1, Writer("id1", logA))
         )
 
         persist("invalid-endpoint", "ev-1").failed.await mustBe a[ReplyException]
@@ -198,8 +197,8 @@ class VertxWriteRouterSpec extends TestKit(ActorSystem("test", VertxPublisherSpe
     }
     "encountering an error while persisting events" must {
       "return a failure for a failed event" in {
-        writeRouter(
-          WriteRoute(endpoint1, Writer("id1", failingWriteLog(logA, Seq("ev-fail"))))
+        logRouter(
+          LogRoute(endpoint1, Writer("id1", failingWriteLog(logA, Seq("ev-fail"))))
         )
 
         persist(endpoint1, "ev-1").await must be("ev-1")

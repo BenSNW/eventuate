@@ -19,7 +19,7 @@ package com.rbmhtechnology.eventuate.adapter.vertx
 import akka.actor.{ActorRef, ActorSystem}
 import akka.testkit._
 import com.rbmhtechnology.eventuate.SingleLocationSpecLeveldb
-import com.rbmhtechnology.eventuate.adapter.vertx.api.VertxEndpointRouter
+import com.rbmhtechnology.eventuate.adapter.vertx.api.EndpointRouter
 import com.typesafe.config.ConfigFactory
 import org.scalatest._
 
@@ -41,7 +41,7 @@ class VertxPublisherSpec extends TestKit(ActorSystem("test", VertxPublisherSpec.
 
   val inboundLogId = "log_inbound"
 
-  def startLogAdapter(endpointRouter: VertxEndpointRouter): ActorRef =
+  def vertxPublisher(endpointRouter: EndpointRouter): ActorRef =
     system.actorOf(VertxPublisher.props(inboundLogId, log, endpointRouter, vertx, actorStorageProvider()))
 
   def read: String = read(inboundLogId)
@@ -50,7 +50,7 @@ class VertxPublisherSpec extends TestKit(ActorSystem("test", VertxPublisherSpec.
 
   "A VertxPublisher" must {
     "publish events from the beginning of the event log" in {
-      startLogAdapter(VertxEndpointRouter.routeAllTo(endpoint1))
+      vertxPublisher(EndpointRouter.routeAllTo(endpoint1))
       val writtenEvents = writeEvents("ev", 50)
 
       storageProbe.expectMsg(read)
@@ -64,7 +64,7 @@ class VertxPublisherSpec extends TestKit(ActorSystem("test", VertxPublisherSpec.
       endpoint1Probe.receiveNVertxMsg[String](50).map(_.body) must be(writtenEvents.map(_.payload))
     }
     "publish events from a stored sequence number" in {
-      startLogAdapter(VertxEndpointRouter.routeAllTo(endpoint1))
+      vertxPublisher(EndpointRouter.routeAllTo(endpoint1))
       val writtenEvents = writeEvents("ev", 50)
 
       storageProbe.expectMsg(read)
@@ -78,7 +78,7 @@ class VertxPublisherSpec extends TestKit(ActorSystem("test", VertxPublisherSpec.
       endpoint1Probe.receiveNVertxMsg[String](40).map(_.body) must be(writtenEvents.drop(10).map(_.payload))
     }
     "publish events in batches" in {
-      startLogAdapter(VertxEndpointRouter.routeAllTo(endpoint1))
+      vertxPublisher(EndpointRouter.routeAllTo(endpoint1))
       val writtenEvents = writeEvents("ev", 100)
 
       storageProbe.expectMsg(read)
@@ -97,7 +97,7 @@ class VertxPublisherSpec extends TestKit(ActorSystem("test", VertxPublisherSpec.
     "publish events to multiple consumers" in {
       val otherConsumer = eventBusProbe(endpoint1)
 
-      startLogAdapter(VertxEndpointRouter.routeAllTo(endpoint1))
+      vertxPublisher(EndpointRouter.routeAllTo(endpoint1))
       val writtenEvents = writeEvents("e", 3)
 
       storageProbe.expectMsg(read)
@@ -115,7 +115,7 @@ class VertxPublisherSpec extends TestKit(ActorSystem("test", VertxPublisherSpec.
       storageProbe.reply(3L)
     }
     "publish selected events only" in {
-      startLogAdapter(VertxEndpointRouter.route {
+      vertxPublisher(EndpointRouter.route {
         case ev: String if isOddEvent(ev, "e") => endpoint1
       })
       writeEvents("e", 10)
@@ -133,7 +133,7 @@ class VertxPublisherSpec extends TestKit(ActorSystem("test", VertxPublisherSpec.
       storageProbe.reply(10L)
     }
     "route events to different endpoints" in {
-      startLogAdapter(VertxEndpointRouter.route {
+      vertxPublisher(EndpointRouter.route {
         case ev: String if isEvenEvent(ev, "e") => endpoint1
         case ev: String if isOddEvent(ev, "e") => endpoint2
       })
@@ -158,7 +158,7 @@ class VertxPublisherSpec extends TestKit(ActorSystem("test", VertxPublisherSpec.
       storageProbe.reply(10L)
     }
     "deliver no events if the routing does not match" in {
-      startLogAdapter(VertxEndpointRouter.route {
+      vertxPublisher(EndpointRouter.route {
         case "i-will-never-match" => endpoint1
       })
       writeEvents("e", 10)

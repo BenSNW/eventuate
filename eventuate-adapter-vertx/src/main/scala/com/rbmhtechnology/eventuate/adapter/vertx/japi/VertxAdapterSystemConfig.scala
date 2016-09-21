@@ -16,9 +16,11 @@
 
 package com.rbmhtechnology.eventuate.adapter.vertx.japi
 
-import com.rbmhtechnology.eventuate.adapter.vertx.api.{ VertxAdapterSystemConfig => SVertxAdapterSystemConfig }
-import scala.annotation.varargs
 import java.util.{ Collection => JCollection }
+
+import com.rbmhtechnology.eventuate.adapter.vertx.api.{ VertxAdapterSystemConfig => SVertxAdapterSystemConfig }
+
+import scala.annotation.varargs
 
 object VertxAdapterSystemConfig {
 
@@ -29,9 +31,8 @@ object VertxAdapterSystemConfig {
 class VertxAdapterSystemConfig(val underlying: SVertxAdapterSystemConfig) {
   import scala.collection.JavaConverters._
 
-  @varargs
-  def addAdapter(first: VertxAdapterConfig, rest: VertxAdapterConfig*): VertxAdapterSystemConfig =
-    new VertxAdapterSystemConfig(underlying.addAdapter(first.underlying, rest.map(_.underlying): _*))
+  def addAdapter(adapterConfiguration: VertxAdapterConfig): VertxAdapterSystemConfig =
+    new VertxAdapterSystemConfig(underlying.addAdapter(adapterConfiguration.underlying))
 
   def addAdapters(adapterConfigurations: JCollection[VertxAdapterConfig]): VertxAdapterSystemConfig =
     new VertxAdapterSystemConfig(underlying.addAdapters(adapterConfigurations.asScala.toVector.map(_.underlying)))
